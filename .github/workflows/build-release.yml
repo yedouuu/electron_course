@@ -1,4 +1,4 @@
-name: Build & Publish Electron App (Windows + macOS)
+name: Build & Publish Electron App (Windows)
 
 on:
   push:
@@ -22,11 +22,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Configure node-gyp Python
-        shell: pwsh
-        run: |
-          npm config set python "$env:pythonLocation\\python.exe"
-
       - name: Install dependencies
         run: npm install
 
@@ -38,21 +33,3 @@ jobs:
       - name: 修复 latest.yml 的 sha512
         run: npm run fix:sha512
 
-  # build-mac:
-  #   runs-on: macos-latest
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-
-  #     - name: Setup Node
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 20
-
-  #     - name: Install dependencies
-  #       run: npm install
-
-  #     - name: Build macOS DMG
-  #       run: npm run dist:mac
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
