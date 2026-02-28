@@ -519,6 +519,8 @@ export const CounterDashboard: React.FC<CounterDashboardProps> = ({
   // 使用策略模式对不同协议的不同模式码进行处理
   const handleProtocolData = useCallback((protocolDataArr: BaseProtocolData[]) => {
     console.log("Received protocol data:", protocolDataArr);
+    let sessionInBatch: SessionData | null | undefined = currentSession;
+
     protocolDataArr.forEach((data) => {
       switch (data.protocolType) {
         case "ZMProtocol":
@@ -530,11 +532,17 @@ export const CounterDashboard: React.FC<CounterDashboardProps> = ({
             // 处理ZM点钞结果数据
             const updatedSession = handleSessionUpdate(
               data as CountingProtocolData,
-              currentSession,
+              sessionInBatch,
               autoSave,
               setCurrentSession,
               setSessionData
             );
+
+            // 关键修复：同一批协议里串行传递最新会话，避免“刷新+结束”同包时使用过期会话
+            sessionInBatch = isSessionEnd((data as CountingProtocolData).status)
+              ? null
+              : updatedSession;
+
             console.log("Updated session from hex data:", updatedSession);
           }
           break;
