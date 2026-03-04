@@ -1,7 +1,9 @@
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "serialport";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, app } from "electron";
 import { ipcWebContentsSend } from "./utils.js";
+import * as fs from "fs/promises";
+import * as path from "path";
 
 // 定义扩展的端口信息接口
 interface PortDetails {
@@ -42,9 +44,110 @@ export class SerialPortManager {
   private hexBuffer: Buffer = Buffer.alloc(0); // 用于hex数据缓冲
   private dataTimeout: NodeJS.Timeout | null = null; // 用于延时发送缓冲数据
   private useRawMode = true; // 默认使用原始数据模式（hex模式）
+  private protocolLogMaxBytes = 4 * 1024 * 1024; // 4MB日志文件大小限制，超过后切换到另一个文件继续记录
+  // private protocolLogMaxBytes = 4 * 1024; // 测试用4KB，实际使用时请使用4MB
+  private protocolLogFilePaths: string[];
+  private protocolLogActiveIndex = 0;
+  private protocolLogWriteQueue: Promise<void> = Promise.resolve();
 
   constructor(mainWindow: BrowserWindow) {
     this.mainWindow = mainWindow;
+    const dataDir = this.getDataDirPath();
+    this.protocolLogFilePaths = [
+      path.join(dataDir, "serial-protocol-0.log"),
+      path.join(dataDir, "serial-protocol-1.log"),
+    ];
+    this.initializeProtocolLogFile();
+  }
+
+  private getDataDirPath(): string {
+    const isDevelopment = process.env.NODE_ENV === "development";
+    const projectRoot = isDevelopment
+      ? process.cwd()
+      : path.dirname(app.getPath("exe"));
+    return path.join(projectRoot, "Data");
+  }
+
+  private async initializeProtocolLogFile(): Promise<void> {
+    try {
+      await fs.mkdir(path.dirname(this.protocolLogFilePaths[0]), {
+        recursive: true,
+      });
+      this.protocolLogActiveIndex = await this.detectActiveLogFileIndex();
+      await fs.appendFile(
+        this.protocolLogFilePaths[this.protocolLogActiveIndex],
+        `\n===== Serial log started at ${new Date().toISOString()} =====\n`,
+        "utf8"
+      );
+    } catch (error) {
+      console.error("Failed to initialize serial protocol log file:", error);
+    }
+  }
+
+  private async detectActiveLogFileIndex(): Promise<number> {
+    try {
+      const stats = await Promise.all(
+        this.protocolLogFilePaths.map(async (filePath) => {
+          try {
+            return await fs.stat(filePath);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const firstTime = stats[0]?.mtimeMs ?? 0;
+      const secondTime = stats[1]?.mtimeMs ?? 0;
+      return secondTime > firstTime ? 1 : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async getFileSizeSafe(filePath: string): Promise<number> {
+    try {
+      const stat = await fs.stat(filePath);
+      return stat.size;
+    } catch {
+      return 0;
+    }
+  }
+
+  private appendProtocolLog(line: string): void {
+    this.protocolLogWriteQueue = this.protocolLogWriteQueue
+      .then(async () => {
+        const entry = `${line}\n`;
+        const entryBytes = Buffer.byteLength(entry, "utf8");
+
+        let activePath =
+          this.protocolLogFilePaths[this.protocolLogActiveIndex];
+        let currentSize = await this.getFileSizeSafe(activePath);
+
+        if (currentSize + entryBytes > this.protocolLogMaxBytes) {
+          this.protocolLogActiveIndex = (this.protocolLogActiveIndex + 1) % 2;
+          activePath = this.protocolLogFilePaths[this.protocolLogActiveIndex];
+          await fs.writeFile(activePath, "", "utf8");
+          currentSize = 0;
+        }
+
+        if (entryBytes > this.protocolLogMaxBytes) {
+          const truncated = entry.slice(
+            entry.length - this.protocolLogMaxBytes,
+            entry.length
+          );
+          await fs.writeFile(activePath, truncated, "utf8");
+          return;
+        }
+
+        if (currentSize + entryBytes > this.protocolLogMaxBytes) {
+          return;
+        }
+
+        await fs.appendFile(activePath, entry, "utf8");
+      })
+      .catch((error) => {
+        console.error("Failed to write serial protocol log:", error);
+      });
   }
 
   /**
@@ -439,8 +542,12 @@ export class SerialPortManager {
     this.parser.on("data", (line: string) => {
       const timestamp = new Date().toLocaleTimeString();
       const messageType = this.identifyMessageType(line);
+      const receivedAt = new Date().toISOString();
       
       console.log(`Received line data [${messageType}]:`, line);
+      this.appendProtocolLog(
+        `[${receivedAt}] [RX] [TEXT] [${messageType}] ${line.replace(/\r?\n/g, "\\n")}`
+      );
       
       // 发送原始文本数据到React端
       ipcWebContentsSend("serial-data-received", this.mainWindow.webContents, {
@@ -457,10 +564,12 @@ export class SerialPortManager {
     if (this.hexBuffer.length === 0) return;
 
     const timestamp = new Date().toLocaleTimeString();
+    const receivedAt = new Date().toISOString();
     const hexData = this.hexBuffer.toString("hex").toUpperCase();
     const formattedHexData = this.formatHexString(hexData);
 
     console.log("Received hex data:", formattedHexData);
+    this.appendProtocolLog(`[${receivedAt}] [RX] [HEX] ${formattedHexData}`);
     
     // 只发送原始数据到React端，让React处理所有协议逻辑
     ipcWebContentsSend("serial-data-received", this.mainWindow.webContents, {
