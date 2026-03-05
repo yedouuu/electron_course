@@ -55,6 +55,25 @@ interface CounterDashboardProps {
   className?: string;
 }
 
+/* 日志服务 */
+
+function logProtocolEvent(
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  metadata?: Record<string, unknown>
+): void {
+  const electronApi = window?.electron;
+  if (!electronApi?.writeLog) return;
+
+  void electronApi.writeLog({
+    level,
+    channel: "ui-protocol",
+    source: "CounterDashboard",
+    message,
+    metadata,
+  });
+}
+
 // Session管理函数 - 处理点钞会话
 const handleSessionUpdate = (
   protocolData: CountingProtocolData,
@@ -102,6 +121,9 @@ const handleSessionUpdate = (
 
   // 如果没有当前Session但不是开始状态，说明有问题，创建一个临时Session
   if (!currentSession) {
+    logProtocolEvent("warn", "No current session found, creating a temporary session", {
+      protocolData,
+    });
     const tempSession: SessionData = {
       id: generateSnowflakeId(),
       no: 999,
@@ -227,6 +249,11 @@ const handleSessionUpdate = (
     if (updatedSession.details && updatedSession.details.length > 2000) {
       updatedSession.details = updatedSession.details.slice(-2000);
     }
+
+    logProtocolEvent("info", "Updated session with protocol data", {
+      protocolData,
+      updatedSession,
+    });
   }
 
   // 如果Session完成，添加到历史记录但保留在当前Session显示 (结束协议不携带金额数据)

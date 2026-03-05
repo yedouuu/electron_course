@@ -79,6 +79,30 @@ type SerialPortConfig = {
   parity?: 'none' | 'even' | 'odd' | 'mark' | 'space';
 };
 
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+type WriteLogRequest = {
+  message: string;
+  level?: LogLevel;
+  channel?: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type LogFileInfo = {
+  path: string;
+  size: number;
+  updatedAt: string;
+};
+
+type LogStatus = {
+  activeIndex: number;
+  activeFilePath: string;
+  maxFileBytes: number;
+  fileCount: number;
+  files: LogFileInfo[];
+};
+
 // 自动更新相关类型
 type UpdateInfo = {
   version: string;
@@ -119,6 +143,9 @@ type EventPayloadMapping = {
   "send-serial-hex-data": void;
   "get-serial-connection-status": SerialConnectionStatus;
   "set-serial-receive-mode": boolean;
+  "write-log": boolean;
+  "get-log-status": LogStatus;
+  "get-log-files": string[];
   // 文件管理相关事件
   "export-excel": ExportResult;
   "export-pdf": ExportResult;
@@ -169,6 +196,9 @@ interface Window {
     sendSerialHexData: (hexString: string) => Promise<void>;
     getSerialConnectionStatus: () => Promise<SerialConnectionStatus>;
     setSerialReceiveMode: (useRawMode: boolean) => Promise<boolean>;
+    writeLog: (payload: WriteLogRequest) => Promise<boolean>;
+    getLogStatus: () => Promise<LogStatus>;
+    getLogFiles: () => Promise<string[]>;
     
     // Serial Port event subscriptions
     onSerialConnected: (callback: (data: SerialPortConnectionData) => void) => UnsubscribeFunction;

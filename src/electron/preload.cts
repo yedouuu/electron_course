@@ -24,6 +24,12 @@ electron.contextBridge.exposeInMainWorld("electron", {
   sendSerialHexData: (hexString: string) => ipcInvoke("send-serial-hex-data", hexString),
   getSerialConnectionStatus: () => ipcInvoke("get-serial-connection-status"),
   setSerialReceiveMode: (useRawMode: boolean) => ipcInvoke("set-serial-receive-mode", useRawMode),  // Serial Port event subscriptions
+  // 通用日志API
+  writeLog: (payload: WriteLogRequest) => ipcInvoke("write-log", payload),
+  getLogStatus: () => ipcInvoke("get-log-status"),
+  getLogFiles: () => ipcInvoke("get-log-files"),
+
+  // Serial Port event subscriptions
   onSerialConnected: (callback: (data: SerialPortConnectionData) => void) => ipcOn("serial-connected", callback),
   onSerialDisconnected: (callback: () => void) => ipcOn("serial-disconnected", callback),
   onSerialDataReceived: (callback: (data: SerialDataReceived) => void) => ipcOn("serial-data-received", callback),

@@ -31,6 +31,23 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
   getProtocolName(): string {
     return "ZMProtocol";
   }
+
+  private logProtocolEvent(
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    metadata?: Record<string, unknown>
+  ): void {
+    const electronApi = window?.electron;
+    if (!electronApi?.writeLog) return;
+
+    void electronApi.writeLog({
+      level,
+      channel: "ui-protocol",
+      source: this.getProtocolName(),
+      message,
+      metadata,
+    });
+  }
   
   canHandle(hexData: string): boolean {
     const cleanHex = cleanHexString(hexData);
@@ -57,6 +74,10 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
       // 检查是否能处理该协议
       if (!this.canHandle(cleanHex)) {
         console.warn(`[${this.getProtocolName()}] Cannot handle this protocol data`);
+        this.logProtocolEvent("warn", "Cannot handle protocol data", {
+          hexLength: cleanHex.length,
+          preview: cleanHex.slice(0, 64),
+        });
         return null;
       }
       
@@ -71,10 +92,20 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
         }
       }
 
+      this.logProtocolEvent("info", "Protocol parse finished", {
+        packetCount: protocols.length,
+        parsedCount: results.length,
+      });
+
+      
+
       return results.length > 0 ? results : null;
 
     } catch (error) {
       console.error(`[${this.getProtocolName()}] Error parsing protocol data:`, error);
+      this.logProtocolEvent("error", "Error parsing protocol data", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -152,12 +183,19 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
       // 验证最小长度 (AA55 + 长度 + 模式码 + CRC + A55A = 2 + 2 + 2 + 1 + 2 = 9字节最小)
       if (bytes.length < 10) {
         warningLog(`[${this.getProtocolName()}] Packet too short:`, bytes.length);
+        this.logProtocolEvent("warn", "Packet too short", {
+          packetBytes: bytes.length,
+        });
         return null;
       }
       
       // 验证协议头
       if (!validateProtocolHeader(bytes, ZMProtocolParser.PROTOCOL_HEADER)) {
         warningLog(`[${this.getProtocolName()}] Invalid protocol header:`, bytes[0], bytes[1]);
+        this.logProtocolEvent("warn", "Invalid protocol header", {
+          header0: bytes[0],
+          header1: bytes[1],
+        });
         return null;
       }
       
@@ -169,6 +207,10 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
 
       if (bytes.length < expectedTotalLength) {
         warningLog(`[${this.getProtocolName()}] Incomplete packet. Expected:`, expectedTotalLength, 'Got:', bytes.length);
+        this.logProtocolEvent("warn", "Incomplete packet", {
+          expectedTotalLength,
+          actualLength: bytes.length,
+        });
         return null;
       }
       
@@ -186,15 +228,51 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
       // 验证校验和, 只计算Mode + Data部分
       if (!this.validateCheckSUM(bytes.slice(4, bytes.length - 3), crc)) {
         warningLog(`[${this.getProtocolName()}] CheckSUM validation failed`);
+        this.logProtocolEvent("warn", "Checksum validation failed", {
+          cmdGroup,
+        });
         return null;
       }
 
       const parsedData = this.parseDataByCmdGroup(cmdGroup, data);
       console.log(`[${this.getProtocolName()}] Parsed data:`, parsedData);
+
+      if (parsedData) {
+        const countingData = parsedData as CountingProtocolData;
+        this.logProtocolEvent("info", "Single packet parsed", {
+          timestamp: countingData.timestamp,
+          protocolType: countingData.protocolType,
+          cmdGroup: countingData.cmdGroup,
+          rawData: countingData.rawData,
+          check: countingData.check,
+          length: countingData.length,
+          totalCount: countingData.totalCount,
+          denomination: countingData.denomination,
+          totalAmount: countingData.totalAmount,
+          currencyCode: countingData.currencyCode,
+          serialNumber: countingData.serialNumber,
+          machineMode: countingData.machineMode,
+          reserved1: countingData.reserved1,
+          errorCode: countingData.errorCode,
+          status: countingData.status,
+          reserved2: countingData.reserved2,
+          crc: countingData.crc,
+          dataLength: data.length,
+        });
+      } else {
+        this.logProtocolEvent("warn", "Unsupported CMD group", {
+          cmdGroup,
+          dataLength: data.length,
+        });
+      }
+
       return parsedData;
 
     } catch (error) {
       debugLog(`[${this.getProtocolName()}] Error parsing single protocol:`, error);
+      this.logProtocolEvent("error", "Error parsing single protocol", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }

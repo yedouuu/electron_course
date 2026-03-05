@@ -1,7 +1,7 @@
 {
   "name": "union-dashboard-beta",
   "private": true,
-  "version": "0.8.71",
+  "version": "0.8.73",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {

@@ -10,8 +10,10 @@ import { StartupOptimizer } from "./startupOptimizer.js";
 import { startupConfig } from "./startupConfig.js";
 import { fileManager } from "./fileManage.js";
 import { AutoUpdaterManager } from "./autoUpdater.js";
+import { RotatingLogService } from "./logging/LogService.js";
+import { registerLogIpcHandlers } from "./logging/ipc.js";
 import { readFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 
 // 获取应用版本
 function getAppVersion(): string {
@@ -168,8 +170,20 @@ app.on("ready", async () => {
     }
   });
 
+  const dataDir = join(
+    isDev() ? process.cwd() : dirname(app.getPath("exe")),
+    "Data"
+  );
+  const logService = new RotatingLogService({
+    baseDir: dataDir,
+    filePrefix: "serial-protocol",
+    maxFileBytes: 4 * 1024 * 1024, // 4MB
+    fileCount: 2,
+  });
+
   // 初始化串口管理器
-  const serialPortManager = new SerialPortManager(mainWindow);
+  const serialPortManager = new SerialPortManager(mainWindow, logService);
+  registerLogIpcHandlers(logService);
 
   // 初始化自动更新管理器
   autoUpdaterManager = new AutoUpdaterManager(mainWindow);
