@@ -1,7 +1,7 @@
 {
   "name": "union-dashboard-beta",
   "private": true,
-  "version": "0.8.73",
+  "version": "0.8.8",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -16,6 +16,7 @@
     "dist:win": "npm run transpile:electron && npm run build && electron-builder --win --x64",
     "dist:linux": "npm run transpile:electron && npm run build && electron-builder --linux --x64",
     "fix:sha512": "node scripts/fix-latest-yml.cjs",
+    "test:fragment": "node scripts/test-fragment-sender.mjs",
     "test:e2e": "playwright test",
     "test:unit": "vitest src",
     "test:unit:serial": "vitest src/electron/serialPort.test.ts",

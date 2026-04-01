@@ -5,7 +5,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     setupFiles: ['./src/electron/test-setup.ts'],
-    include: ['src/electron/**/*.test.ts'],
+    include: ['src/electron/**/*.test.ts', 'src/ui/**/*.test.ts'],
     exclude: ['src/electron/**/*.integration.test.ts'],
     deps: {
       inline: [/electron/]

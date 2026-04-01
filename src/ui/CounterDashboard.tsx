@@ -269,6 +269,18 @@ const handleSessionUpdate = (
       // toast.error("No valid counting data found in this session.");
       return updatedSession;
     }
+    // 校验明细总数与协议totalCount是否一致（仅日志告警，不影响功能）
+    const detailTotal = Array.from(
+      updatedSession.currencyCountRecords?.values() || []
+    ).reduce((sum, r) => sum + r.totalCount, 0) + (updatedSession.errorCount || 0);
+    if (detailTotal !== updatedSession.totalCount) {
+      logProtocolEvent("warn", "Detail count mismatch detected at session end", {
+        totalCount: updatedSession.totalCount,
+        detailTotal,
+        diff: updatedSession.totalCount - detailTotal,
+      });
+    }
+
     setSessionData((prev) => [updatedSession, ...prev].slice(0, 50));
     setCurrentSession(null);
     if (autoSave) {

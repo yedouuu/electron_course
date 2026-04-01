@@ -28,6 +28,9 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
   private static readonly OVERHEAD_LENGTH = 14;   // 头部4 + 长度4 + CRC2 + 尾部4
   // private static readonly HEAD_LENGTH = 4;        // 头部4 + 长度4 + CRC2 + 尾部4
 
+  // 用于缓存分包场景下的不完整数据帧
+  private remainingBuffer: string = '';
+
   getProtocolName(): string {
     return "ZMProtocol";
   }
@@ -37,7 +40,7 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
     message: string,
     metadata?: Record<string, unknown>
   ): void {
-    const electronApi = window?.electron;
+    const electronApi = typeof window !== 'undefined' ? window?.electron : undefined;
     if (!electronApi?.writeLog) return;
 
     void electronApi.writeLog({
@@ -50,8 +53,13 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
   }
   
   canHandle(hexData: string): boolean {
+    // 如果有缓存的不完整数据帧，则继续接收后续分包
+    if (this.remainingBuffer.length > 0) {
+      return true;
+    }
+
     const cleanHex = cleanHexString(hexData);
-    
+
     // 检查最小长度
     if (cleanHex.length < ZMProtocolParser.MIN_PACKET_LENGTH) {
       return false;
@@ -61,29 +69,34 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
     if (!cleanHex.startsWith(ZMProtocolParser.PROTOCOL_HEADER_STR)) {
       return false;
     }
-    
+
     return true;
-  }  
+  }
   
   parse(hexData: string): BaseProtocolData[] | null {
     try {
       // console.log(`[${this.getProtocolName()}] Parsing data: ${hexData}`);
       const cleanHex = cleanHexString(hexData);
+
+      // 将上次缓存的不完整帧与本次数据拼接（处理Windows分包）
+      const combinedHex = this.remainingBuffer + cleanHex;
+      this.remainingBuffer = '';
+
       const results: BaseProtocolData[] = [];
-      
-      // 检查是否能处理该协议
-      if (!this.canHandle(cleanHex)) {
-        console.warn(`[${this.getProtocolName()}] Cannot handle this protocol data`);
+
+      // 检查拼接后的数据是否能处理
+      if (combinedHex.length < ZMProtocolParser.MIN_PACKET_LENGTH ||
+          !combinedHex.startsWith(ZMProtocolParser.PROTOCOL_HEADER_STR)) {
         this.logProtocolEvent("warn", "Cannot handle protocol data", {
-          hexLength: cleanHex.length,
-          preview: cleanHex.slice(0, 64),
+          hexLength: combinedHex.length,
+          preview: combinedHex.slice(0, 64),
         });
         return null;
       }
-      
-      // 处理粘包情况：提取多个协议包
-      const protocols = this.extractProtocols(cleanHex);
-      
+
+      // 处理粘包/分包情况：提取多个协议包
+      const protocols = this.extractProtocols(combinedHex);
+
       // 解析第一个有效的协议包
       for (const protocolHex of protocols) {
         const result = this.parseSingleProtocol(protocolHex);
@@ -95,9 +108,10 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
       this.logProtocolEvent("info", "Protocol parse finished", {
         packetCount: protocols.length,
         parsedCount: results.length,
+        bufferedBytes: this.remainingBuffer.length / 2,
       });
 
-      
+
 
       return results.length > 0 ? results : null;
 
@@ -112,9 +126,11 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
   
   /**
    * 提取协议包
-   * 
+   * 同时处理粘包（多帧合并）和分包（单帧被拆分）两种情况。
+   * 不完整的帧尾会保存到 remainingBuffer，等待下次数据到来后拼接。
+   *
    * @param hexData 十六进制数据字符串
-   * @returns 提取到的协议包数组
+   * @returns 提取到的完整协议包数组
    */
   private extractProtocols(hexData: string): string[] {
     const protocols: string[] = [];
@@ -127,8 +143,13 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
         break; // 没有找到更多协议头
       }
 
-      // 检查是否有足够的数据来读取长度字段
-      if (headerIndex + 4 >= hexData.length) {
+      // 检查是否有足够的数据来读取长度字段（4字节头 + 4字节长度）
+      if (headerIndex + 8 > hexData.length) {
+        // 帧头已找到但长度字段不全，保存剩余数据等待分包
+        this.remainingBuffer = hexData.substr(headerIndex);
+        this.logProtocolEvent("warn", "Incomplete packet header buffered for reassembly", {
+          bufferedBytes: this.remainingBuffer.length / 2,
+        });
         break;
       }
 
@@ -142,19 +163,20 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
       const totalPacketLength = dataLength * 2 + ZMProtocolParser.OVERHEAD_LENGTH; // 数据长度*2，1个字节对应2个十六进制字符
 
       // 检查是否有完整的协议包
-      if (totalPacketLength <= hexData.length) {
+      if (headerIndex + totalPacketLength <= hexData.length) {
         const protocolHex = hexData.substr(headerIndex, totalPacketLength);
         protocols.push(protocolHex);
         position = headerIndex + totalPacketLength;
       } else {
-        // 不完整的包，停止处理
+        // 不完整的包：保存剩余数据到缓冲区，等待下次分包数据到来
+        this.remainingBuffer = hexData.substr(headerIndex);
+        this.logProtocolEvent("warn", "Incomplete packet buffered for reassembly", {
+          expectedTotalLength: totalPacketLength / 2,
+          actualLength: (hexData.length - headerIndex) / 2,
+          bufferedBytes: this.remainingBuffer.length / 2,
+        });
         break;
       }
-    }
-
-    // 如果没有找到完整的协议包，返回整个数据进行尝试解析
-    if (protocols.length === 0) {
-      protocols.push(hexData);
     }
 
     console.log(`[${this.getProtocolName()}] Extracted protocols:`, protocols);
@@ -181,7 +203,7 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
       debugLog(`[${this.getProtocolName()}] Parsed bytes:`, bytes);
 
       // 验证最小长度 (AA55 + 长度 + 模式码 + CRC + A55A = 2 + 2 + 2 + 1 + 2 = 9字节最小)
-      if (bytes.length < 10) {
+      if (bytes.length < 9) {
         warningLog(`[${this.getProtocolName()}] Packet too short:`, bytes.length);
         this.logProtocolEvent("warn", "Packet too short", {
           packetBytes: bytes.length,
