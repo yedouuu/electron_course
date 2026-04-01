@@ -24,7 +24,7 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
   // private static readonly PROTOCOL_TAIL = [0xA5, 0x5A];
   private static readonly PROTOCOL_HEADER_STR = "AA55";
   // private static readonly PROTOCOL_TAIL_STR = "A55A";
-  private static readonly MIN_PACKET_LENGTH = 14; // 7字节 = 14个十六进制字符 (最小包：头部4 + 长度4 + MODE4 + CRC2 + 尾部4)
+  // private static readonly MIN_PACKET_LENGTH = 14; // 7字节 = 14个十六进制字符 (最小包：头部4 + 长度4 + MODE4 + CRC2 + 尾部4)
   private static readonly OVERHEAD_LENGTH = 14;   // 头部4 + 长度4 + CRC2 + 尾部4
   // private static readonly HEAD_LENGTH = 4;        // 头部4 + 长度4 + CRC2 + 尾部4
 
@@ -60,17 +60,10 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
 
     const cleanHex = cleanHexString(hexData);
 
-    // 检查最小长度
-    if (cleanHex.length < ZMProtocolParser.MIN_PACKET_LENGTH) {
-      return false;
-    }
-
-    // 检查协议头是否以AA55开头
-    if (!cleanHex.startsWith(ZMProtocolParser.PROTOCOL_HEADER_STR)) {
-      return false;
-    }
-
-    return true;
+    // 不再限制最小长度，由 parse() 负责缓存等待后续分包。
+    // 接受以 AA55 开头的帧，也接受 AA55 头部的任意前缀（如只有 "AA" 或 "AA55" 的前3字符），
+    // 防止 Windows 驱动将帧头 "AA 55" 本身也拆成两次 data 事件。
+    return "AA55".startsWith(cleanHex.slice(0, 4));
   }
   
   parse(hexData: string): BaseProtocolData[] | null {
@@ -84,15 +77,26 @@ export class ZMProtocolParser implements ProtocolParser<BaseProtocolData[]> {
 
       const results: BaseProtocolData[] = [];
 
-      // 检查拼接后的数据是否能处理
-      if (combinedHex.length < ZMProtocolParser.MIN_PACKET_LENGTH ||
-          !combinedHex.startsWith(ZMProtocolParser.PROTOCOL_HEADER_STR)) {
+      // 阶段1: 数据不足 4 字符，无法确认 AA55 头部
+      if (combinedHex.length < 4) {
+        // 若仍是 AA55 的合法前缀则缓存，等待后续分包补全头部
+        if (ZMProtocolParser.PROTOCOL_HEADER_STR.startsWith(combinedHex)) {
+          this.remainingBuffer = combinedHex;
+        }
+        return null;
+      }
+
+      // 阶段2: 头部不是 AA55，数据不属于本协议，丢弃
+      if (!combinedHex.startsWith(ZMProtocolParser.PROTOCOL_HEADER_STR)) {
         this.logProtocolEvent("warn", "Cannot handle protocol data", {
           hexLength: combinedHex.length,
           preview: combinedHex.slice(0, 64),
         });
         return null;
       }
+
+      // 阶段3: AA55 头部确认，交 extractProtocols 处理；
+      // 长度不足时 extractProtocols 内部会将剩余数据存入 remainingBuffer
 
       // 处理粘包/分包情况：提取多个协议包
       const protocols = this.extractProtocols(combinedHex);

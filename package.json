@@ -1,7 +1,7 @@
 {
   "name": "union-dashboard-beta",
   "private": true,
-  "version": "0.8.8",
+  "version": "0.8.9",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -20,6 +20,7 @@
     "test:e2e": "playwright test",
     "test:unit": "vitest src",
     "test:unit:serial": "vitest src/electron/serialPort.test.ts",
+    "test:unit:zmProtocol": "vitest src/ui/protocols/zmProtocol.test.ts",
     "test:unit:watch": "vitest src --watch",
     "test:unit:coverage": "vitest src --coverage"
   },

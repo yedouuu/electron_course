@@ -38,6 +38,40 @@ const COUNT_RESULT_CHUNK1 =
 const COUNT_RESULT_CHUNK2 = '00 00 00 01 00 4C A5 5A';
 
 /**
+ * 日志实测分包场景 (2026-04-01 客户现场)
+ * Windows 串口驱动将帧头3字节单独触发一次 data 事件
+ */
+/** 第1片：仅帧头前3字节 */
+const COUNT_RESULT_HEAD_3B = 'AA 55 29';
+/** 第2片：从第4字节到帧尾（与 COUNT_RESULT_HEAD_3B 拼接后 = COUNT_RESULT_FULL） */
+const COUNT_RESULT_TAIL_FROM_3B =
+  '00 01 01 ' +
+  '19 00 00 00 ' +
+  '64 00 00 00 ' +
+  'C4 09 00 00 00 00 00 00 ' +
+  '50 4C 4E 00 ' +
+  '5F 5F 5F 5F 5F 5F 5F 5F 5F 5F 5F ' +
+  '00 00 00 ' +
+  '00 00 00 01 00 ' +
+  '4C ' +
+  'A5 5A';
+
+/** 极端分包：仅第1字节 0xAA */
+const COUNT_RESULT_HEAD_1B = 'AA';
+/** 对应尾部：55 + 其余所有字节 */
+const COUNT_RESULT_TAIL_FROM_1B =
+  '55 29 00 01 01 ' +
+  '19 00 00 00 ' +
+  '64 00 00 00 ' +
+  'C4 09 00 00 00 00 00 00 ' +
+  '50 4C 4E 00 ' +
+  '5F 5F 5F 5F 5F 5F 5F 5F 5F 5F 5F ' +
+  '00 00 00 ' +
+  '00 00 00 01 00 ' +
+  '4C ' +
+  'A5 5A';
+
+/**
  * HANDSHAKE 完整帧 (9 字节)
  * 净荷: 模式(01) + CMD-G(00) = 2 字节
  * CRC = (0x01 + 0x00) & 0xFF = 0x01
@@ -65,12 +99,20 @@ describe('ZMProtocolParser', () => {
       expect(parser.canHandle('AA 55 00 00 00 00 00')).toBe(true);
     });
 
-    it('数据太短（< 14 hex 字符）→ 返回 false', () => {
-      expect(parser.canHandle('AA 55 01')).toBe(false);
+    it('3 字节帧头片段 "AA 55 29" → 返回 true（不再被最小长度拦截）', () => {
+      expect(parser.canHandle('AA 55 29')).toBe(true);
+    });
+
+    it('单字节 "AA" → 返回 true（AA55 头部前缀，等待后续分包）', () => {
+      expect(parser.canHandle('AA')).toBe(true);
     });
 
     it('错误帧头 → 返回 false', () => {
       expect(parser.canHandle('FD DF 29 00 01 01 00')).toBe(false);
+    });
+
+    it('不以 AA55 开头的短数据 → 返回 false', () => {
+      expect(parser.canHandle('BB 55 01')).toBe(false);
     });
 
     it('有 remainingBuffer 时，即使传入乱码数据也返回 true', () => {
@@ -167,6 +209,37 @@ describe('ZMProtocolParser', () => {
       expect(parser.parse(firstTenBytes)).toBeNull();
       // parse 进入 extractProtocols，发现帧不完整，存入 remainingBuffer
       expect(parser.canHandle('00')).toBe(true);
+    });
+
+    it('日志实测: 3字节头部片段 "AA 55 29" → 返回 null 并进入缓冲', () => {
+      // 复现 2026-04-01 客户现场日志：Windows 驱动单独触发只含 AA 55 29 的 data 事件
+      expect(parser.parse(COUNT_RESULT_HEAD_3B)).toBeNull();
+      expect(parser.canHandle('00')).toBe(true); // remainingBuffer 非空
+    });
+
+    it('日志实测: 3字节头片 + 剩余片 → 拼接后解析成功，结果与完整帧一致', () => {
+      expect(parser.parse(COUNT_RESULT_HEAD_3B)).toBeNull();
+      const result = parser.parse(COUNT_RESULT_TAIL_FROM_3B);
+      expect(result).not.toBeNull();
+      expect(result!.length).toBe(1);
+      const data = result![0] as CountingProtocolData;
+      expect(data.totalCount).toBe(25);
+      expect(data.denomination).toBe(100);
+      expect(data.currencyCode).toBe('PLN');
+    });
+
+    it('极端分包: 仅1字节 "AA" → 缓存等待', () => {
+      expect(parser.parse(COUNT_RESULT_HEAD_1B)).toBeNull();
+      expect(parser.canHandle('00')).toBe(true);
+    });
+
+    it('极端分包: 1字节 "AA" + 剩余所有字节 → 解析成功', () => {
+      expect(parser.parse(COUNT_RESULT_HEAD_1B)).toBeNull();
+      const result = parser.parse(COUNT_RESULT_TAIL_FROM_1B);
+      expect(result).not.toBeNull();
+      expect(result!.length).toBe(1);
+      expect((result![0] as CountingProtocolData).totalCount).toBe(25);
+      expect((result![0] as CountingProtocolData).currencyCode).toBe('PLN');
     });
   });
 
